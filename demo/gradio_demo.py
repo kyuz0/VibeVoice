@@ -41,6 +41,7 @@ class VibeVoiceDemo:
         self.stop_generation = False  # Flag to stop generation
         self.current_streamer = None  # Track current audio streamer
         self.load_model()
+        self.custom_voices_folder = None
         self.setup_voice_presets()
         self.load_example_scripts()  # Load example scripts
         
@@ -74,44 +75,49 @@ class VibeVoiceDemo:
             print(f"Language model attention: {self.model.model.language_model.config._attn_implementation}")
     
     def setup_voice_presets(self):
-        """Setup voice presets by scanning the voices directory."""
-        voices_dir = os.path.join(os.path.dirname(__file__), "voices")
-        
-        # Check if voices directory exists
-        if not os.path.exists(voices_dir):
-            print(f"Warning: Voices directory not found at {voices_dir}")
+        """Setup voice presets by scanning voices directories."""
+        default_dir = os.path.join(os.path.dirname(__file__), "voices")
+        home_dir = os.path.expanduser("~/voices")
+        custom_dir = self.custom_voices_folder
+
+        search_dirs = []
+        if os.path.exists(default_dir):
+            search_dirs.append(default_dir)
+        if os.path.exists(home_dir):
+            search_dirs.append(home_dir)
+        if custom_dir and os.path.exists(custom_dir):
+            search_dirs.append(custom_dir)
+
+        if not search_dirs:
+            print("Warning: No voices directories found")
             self.voice_presets = {}
             self.available_voices = {}
             return
-        
-        # Scan for all WAV files in the voices directory
+
         self.voice_presets = {}
-        
-        # Get all .wav files in the voices directory
-        wav_files = [f for f in os.listdir(voices_dir) 
-                    if f.lower().endswith(('.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac')) and os.path.isfile(os.path.join(voices_dir, f))]
-        
-        # Create dictionary with filename (without extension) as key
-        for wav_file in wav_files:
-            # Remove .wav extension to get the name
-            name = os.path.splitext(wav_file)[0]
-            # Create full path
-            full_path = os.path.join(voices_dir, wav_file)
-            self.voice_presets[name] = full_path
-        
+        for voices_dir in search_dirs:
+            wav_files = [f for f in os.listdir(voices_dir)
+                        if f.lower().endswith(('.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac'))
+                        and os.path.isfile(os.path.join(voices_dir, f))]
+            for wav_file in wav_files:
+                name = os.path.splitext(wav_file)[0]
+                full_path = os.path.join(voices_dir, wav_file)
+                if name not in self.voice_presets:
+                    self.voice_presets[name] = full_path
+
         # Sort the voice presets alphabetically by name for better UI
         self.voice_presets = dict(sorted(self.voice_presets.items()))
-        
-        # Filter out voices that don't exist (this is now redundant but kept for safety)
+
+        # Filter out voices that don't exist (safety check)
         self.available_voices = {
             name: path for name, path in self.voice_presets.items()
             if os.path.exists(path)
         }
-        
+
         if not self.available_voices:
-            raise gr.Error("No voice presets found. Please add .wav files to the demo/voices directory.")
-        
-        print(f"Found {len(self.available_voices)} voice files in {voices_dir}")
+            raise gr.Error("No voice presets found. Please add .wav files to voices directories.")
+
+        print(f"Found {len(self.available_voices)} voice files across: {', '.join(search_dirs)}")
         print(f"Available voices: {', '.join(self.available_voices.keys())}")
     
     def read_audio(self, audio_path: str, target_sr: int = 24000) -> np.ndarray:
@@ -1127,7 +1133,13 @@ def parse_args():
         default=7860,
         help="Port to run the demo on",
     )
-    
+    parser.add_argument(
+        "--custom-voices-folder",
+        type=str,
+        default=None,
+        help="Optional custom voices directory"
+    )
+
     return parser.parse_args()
 
 
@@ -1145,9 +1157,11 @@ def main():
         device=args.device,
         inference_steps=args.inference_steps
     )
+    demo_instance.custom_voices_folder = args.custom_voices_folder
     
     # Create interface
     interface = create_demo_interface(demo_instance)
+
     
     print(f"🚀 Launching demo on port {args.port}")
     print(f"📁 Model path: {args.model_path}")
@@ -1162,7 +1176,7 @@ def main():
             default_concurrency_limit=1  # Process one request at a time
         ).launch(
             share=args.share,
-            # server_port=args.port,
+            server_port=args.port,
             server_name="0.0.0.0" if args.share else "127.0.0.1",
             show_error=True,
             show_api=False  # Hide API docs for cleaner interface
